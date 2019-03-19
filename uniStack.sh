@@ -6,15 +6,22 @@
 # It SHOULD work for Ubuntu, Debian, Arch, and CentOS
 
 # Look for Distribution Type
+if [ -e /etc/debian_version ]; then
+distrotype="debian"
+elif [ -e /etc/arch-release ]; then
+distrotype="archlinux"
+else
 distrotype=$(cat /etc/os-release | grep "ID_LIKE" | sed 's/ID_LIKE=//g' | sed 's/["]//g' | awk '{print $1}')
+fi
 
 # User greeting
-echo "Hello There!"
+echo
+echo "Hello There $distrotype User! "
 echo "===================================="
 echo
 
 # Upgrade Packages
-echo "Updating $distrotype"
+echo "Updating Your $distrotype based system"
 echo "===================================="
 echo
 if [ "$distrotype" = "archlinux" ]; then
@@ -29,79 +36,117 @@ fi
 if [ "$distrotype" = "centos" ]; then
 yum update -y
 fi
+if [ "$distrotype" = "rhel" ]; then
+yum update -y
+fi
+
+# Clock config
+echo
+echo "Set Local Timezone"
+echo "===================================="
+if [ "$distrotype" = "archlinux" ]; then
+	tzselect
+fi
+if [ "$distrotype" = "debian" ]; then
+	dpkg-reconfigure tzdata
+fi
+if [[ "$distrotype" = "centos" ]]; then
+	tzselect
+fi
+if [[ "$distrotype" = "rhel" ]]; then
+	tzselect
+fi
 
 # Hostname config
+echo
 echo "Set Hostname"
 echo "===================================="
 echo
-read -p "What is my Hostname? " HOSTNAME
+read -p "Choose A Hostname. " HOSTNAME
 hostnamectl set-hostname $HOSTNAME
-nano /etc/hosts
-IP=$(curl -s -4 icanhazip.com)
+IP=$(ip -4 addr show dev eth0 | grep inet | tr -s " " | cut -d" " -f3 | head -n 1 | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
 echo "$IP   $HOSTNAME" >> /etc/hosts
 
+
+echo "Restarting SSH Daemon"
+echo "===================================="
+systemctl restart sshd
+
 # Create new USER
-echo "Choose a Username"
+echo
+echo "Setup a non-root user"
 echo "===================================="
 echo
-read -p 'User Name?' USER
+read -p 'New User Name? ' NEWUSER
+
 if [ "$distrotype" = "archlinux" ]; then
-	useradd -m -g users -G wheel -s /bin/bash $USER
+	useradd -m -g users -G wheel -s /bin/bash $NEWUSER
+	echo
 	echo "User added to wheel group"
 	echo "===================================="
 	echo
 fi
-if [ "$distrotype" = "Debian" ]; then
-	adduser $USER
-	adduser $USER sudo
+if [ -e /etc/debian_version ]; then
+	adduser $NEWUSER
+	adduser $NEWUSER sudo
+	echo
 	echo "User added to sudo group"
 	echo "===================================="
 	echo
 fi
-if [ "$distrotype" = "CentOS" ]; then
-	adduser $USER
-	passwd $USER
-	usermod -aG wheel $USER
+if [ "$distrotype" = "centos" ]; then
+	adduser $NEWUSER
+	passwd $NEWUSER
+	usermod -aG wheel $NEWUSER
+	echo "User added to wheel group"
+	echo "===================================="
+	echo
+fi
+if [ "$distrotype" = "rhel" ]; then
+	adduser $NEWUSER
+	passwd $NEWUSER
+	usermod -aG wheel $NEWUSER
+	echo
 	echo "User added to wheel group"
 	echo "===================================="
 	echo
 fi
 
-# Clock config
-echo "TIMEZONE SETUP"
-echo "===================================="
-if [ "$distrotype" = "archlinux" ]; then
-	tzselect
-fi
-if [ "$distrotype" = "Debian" ]; then
-	dpkg-reconfigure tzdata
-fi
-if [[ "$distrotype" = "CentOS" ]]; then
-	tzselect
-fi
+# Setup pubkey directory,
+if [[ ! $PUB ]]; then read -p "Paste $NEWUSER SSH pubkey here: " PUB; fi
 
-# Setup pubkey directory, request pub key from user, set permissions.
-echo "SSH PUBLIC KEY SETUP"
+mkdir -p /home/$NEWUSER/.ssh
+touch /home/$NEWUSER/.ssh/authorized_keys
+echo $PUB > /home/$NEWUSER/.ssh/authorized_keys
+chmod 700 -R /home/$NEWUSER/.ssh
+chmod 600 /home/$NEWUSER/.ssh/authorized_keys
+
+# Request pub key from user, set permissions.
+echo
+echo "SSH Public Key Configuration"
 echo "===================================="
 echo
-read -p 'Which users pubkey are you pasting?' USER
-if [[ ! $PUB ]]; then read -p "Paste $USERS SSH pubkey: " PUB; fi
-mkdir -p /home/${USER}/.ssh
-touch /home/${USER}/.ssh/authorized_keys
-echo $PUB > /home/${USER}/.ssh/authorized_keys
-chmod 700 -R /home/${USER}/.ssh
-chmod 600 /home/${USER}/.ssh/authorized_keys
-
+#read -p "Paste $NEWUSER pubkey here: " PUB
 
 # Proper chown
 if [ "$distrotype" = "archlinux" ]; then
-chown $USER:wheel /home/$USER/.ssh/authorized_keys
-chown $USER:wheel /home/$USER/.ssh/
+chown $NEWUSER:wheel /home/$NEWUSER/.ssh/
+chown $NEWUSER:wheel /home/$NEWUSER/.ssh/authorized_keys
 fi
 
-if [ "$distrotype" = "Debian" ]; then
-	chown $USER:$USER /home/$USER}/.ssh/authorized_keys
-	chown $USER:$USER /home/$USER}/.ssh/
+if [ -e /etc/debian_version ]; then
+	chown $NEWUSER:$NEWUSER /home/$NEWUSER/.ssh/authorized_keys
+	chown $NEWUSER:$NEWUSER /home/$NEWUSER/.ssh/
+fi
+
+if [ "$distrotype" = "rhel" ]; then
+	chown $NEWUSER:wheel /home/$NEWUSER/.ssh/authorized_keys
+	chown $NEWUSER:wheel /home/$NEWUSER/.ssh/
+fi
+
+if [ "$distrotype" = "centos" ]; then
+	chown $NEWUSER:wheel /home/$NEWUSER/.ssh/authorized_keys
+	chown $NEWUSER:wheel /home/$NEWUSER/.ssh/
 fi
 
 # Configure SSHD File and permissions
@@ -110,9 +155,7 @@ sed -i -e "s/#PermitRootLogin no/PermitRootLogin no/" /etc/ssh/sshd_config
 sed -i -e "s/PasswordAuthentication yes/PasswordAuthentication no/" /etc/ssh/sshd_config
 sed -i -e "s/#PasswordAuthentication no/PasswordAuthentication no/" /etc/ssh/sshd_config
 
-echo "Restarting SSH Daemon"
-echo "===================================="
-systemctl restart sshd
-
-echo "Your Linux Server Is Ready!"
+# Finish
+echo
+echo "All done $NEWUSER. Your IP is $IP. System Ready"
 echo "===================================="
